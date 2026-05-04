@@ -25,10 +25,15 @@ public class ExportService {
 
     private String buildCsv(List<StudyItem> items, Map<String, StudyPlan> plans) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Type,Title,Deadline,TotalHours,Completed,Remaining,DaysPerWeek,Weekends,SessionDate,SessionHours,Strategy\n");
+        sb.append("Type,Title,Deadline,TotalHours,Completed,Remaining,DaysPerWeek,HeavierDays,SessionDate,SessionHours,Strategy\n");
 
         for (StudyItem item : items) {
             // one ITEM row per study goal — captures progress state
+            String heavierDaysLabel = item.getHeavierDays().isEmpty() ? "Even"
+                    : item.getHeavierDays().stream()
+                            .sorted()
+                            .map(d -> d.name().substring(0, 3))
+                            .reduce((a, b) -> a + "/" + b).orElse("-");
             sb.append(String.format("ITEM,%s,%s,%.1f,%.1f,%.1f,%d,%s,,,\n",
                     csv(item.getTitle()),
                     item.getDeadline(),
@@ -36,7 +41,7 @@ public class ExportService {
                     item.getHoursCompleted(),
                     item.getRemainingHours(),
                     item.getDaysAvailablePerWeek(),
-                    item.isStudyOnWeekends() ? "Yes" : "No"));
+                    heavierDaysLabel));
 
             // one SESSION row per planned date — captures the future schedule
             StudyPlan plan = plans.get(item.getId());
