@@ -9,7 +9,9 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
 
@@ -37,7 +39,7 @@ public class PersistenceService {
         sb.append("]");
         try {
             Files.writeString(filePath, sb.toString());
-            log.info("Saved " + items.size() + " item(s) → " + filePath);
+            log.fine("Saved " + items.size() + " item(s) → " + filePath);
         } catch (IOException ex) {
             throw new StudyPlannerException("Save failed: " + filePath, ex);
         }
@@ -67,6 +69,15 @@ public class PersistenceService {
         }
         notesJson.append("]");
 
+        // customHoursPerDow serialised as "MONDAY=2.0,WEDNESDAY=3.0,..."
+        StringBuilder customHoursStr = new StringBuilder();
+        boolean firstEntry = true;
+        for (Map.Entry<DayOfWeek, Double> e : it.getCustomHoursPerDow().entrySet()) {
+            if (!firstEntry) customHoursStr.append(",");
+            customHoursStr.append(e.getKey().name()).append("=").append(e.getValue());
+            firstEntry = false;
+        }
+
         // heavierDays serialised as comma-separated DOW names
         StringBuilder heavierDaysStr = new StringBuilder();
         boolean first = true;
@@ -80,11 +91,13 @@ public class PersistenceService {
                 "  {\"title\":\"%s\",\"deadline\":\"%s\",\"totalHours\":%s," +
                 "\"hoursCompleted\":%s,\"daysPerWeek\":%d," +
                 "\"heavierDays\":\"%s\",\"heavierDayMultiplier\":%s," +
+                "\"customHours\":\"%s\"," +
                 "\"notes\":%s," +
                 "\"materialFolder\":\"%s\",\"materialFileCount\":%d,\"estimatedTotalPages\":%d}",
                 escape(it.getTitle()), it.getDeadline(),
                 it.getTotalHours(), it.getHoursCompleted(), it.getDaysAvailablePerWeek(),
                 heavierDaysStr, it.getHeavierDayMultiplier(),
+                customHoursStr,
                 notesJson,
                 escape(it.getMaterialFolder()), it.getMaterialFileCount(), it.getEstimatedTotalPages());
     }
@@ -117,6 +130,23 @@ public class PersistenceService {
 
             StudyItem item = new StudyItem(title, deadline, total, days);
             if (done > 0) item.addProgress(done);
+
+            // customHoursPerDow — safe default: empty map
+            String customHoursRaw = getStringOrDefault(obj, "customHours", "");
+            if (!customHoursRaw.isBlank()) {
+                Map<DayOfWeek, Double> customMap = new LinkedHashMap<>();
+                for (String entry : customHoursRaw.split(",")) {
+                    String[] parts = entry.trim().split("=");
+                    if (parts.length == 2) {
+                        try {
+                            DayOfWeek dow = DayOfWeek.valueOf(parts[0].trim());
+                            double h = Double.parseDouble(parts[1].trim());
+                            if (h > 0) customMap.put(dow, h);
+                        } catch (Exception ignored) {}
+                    }
+                }
+                item.setCustomHoursPerDow(customMap);
+            }
 
             // heavierDays — safe default: empty set (even split)
             String heavierDaysRaw = getStringOrDefault(obj, "heavierDays", "");

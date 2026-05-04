@@ -16,10 +16,10 @@ public final class InputValidator {
 
     public static double validateHours(double hours) {
         if (hours <= 0) {
-            throw new IllegalArgumentException("Hours must be greater than zero.");
+            throw new IllegalArgumentException("You little lazy guy, hours must be greater than zero.");
         }
-        if (hours > 10000) {
-            throw new IllegalArgumentException("Hours value is unrealistically large (max 10000).");
+        if (hours > 1000) {
+            throw new IllegalArgumentException("Oh my sweetie you are so diligence, but hours value is unrealistically large (max 1000).");
         }
         return hours;
     }
@@ -31,7 +31,7 @@ public final class InputValidator {
         try {
             LocalDate date = LocalDate.parse(dateStr.trim());
             if (date.isBefore(LocalDate.now())) {
-                throw new IllegalArgumentException("Deadline cannot be in the past.");
+                throw new IllegalArgumentException("Deadline cannot be in the past. Time travel is not allowed.");
             }
             return date;
         } catch (DateTimeParseException e) {
@@ -48,7 +48,7 @@ public final class InputValidator {
 
     public static double validateProgressHours(double hours) {
         if (hours <= 0) {
-            throw new IllegalArgumentException("Progress hours must be greater than zero.");
+            throw new IllegalArgumentException("Progress hours must be greater than zero. You won't have negative progress.");
         }
         return hours;
     }

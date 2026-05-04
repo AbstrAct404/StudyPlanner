@@ -3,6 +3,7 @@ package studyplanner;
 import studyplanner.exceptions.StudyPlannerException;
 
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,10 @@ public final class AppController {
 
     public static StudyPlan generatePlan(String id, PlanningStrategy strategy) {
         return manager.generatePlan(id, strategy);
+    }
+
+    public static StudyPlan generatePlan(String id, PlanningStrategy strategy, LocalDate startDate) {
+        return manager.generatePlan(id, strategy, startDate);
     }
 
     public static void recordProgress(String id, double hours) {

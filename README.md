@@ -5,44 +5,41 @@ CS-UY 3913 Applied Java Programming — Semester Project
 
 ## What is this?
 
-This is a console-based Java app that helps you manage your study schedule. The idea
-is simple: you tell it what you need to study, when the deadline is, how many hours
-it'll take, and how many days a week you can study — and it builds a schedule for you.
-You can also log your progress as you go, and it'll recalculate how much time you
-have left.
+A console-based Java app that helps you manage your study schedule. You tell it what
+you need to study, when the deadline is, how many hours it'll take, and how many days
+a week you can study — and it builds a day-by-day or week-by-week schedule for you.
 
-There's also an optional AI feature (powered by Anthropic's API) that gives you
-short pacing tips for each study item. It's completely optional though — the app
-works fine without it.
+As you log progress, the plan automatically **redistributes the remaining hours** across
+future days so the schedule always reflects what you still have to do.
+
+There's also an optional AI feature (powered by Anthropic's API) that gives you a
+study roadmap and pacing tips for any item. The app works fully without it.
 
 ---
 
 ## How to run it
 
-You need Java 17 and Maven installed. If you followed the setup, Maven should already
-be at `C:\ProgramData\chocolatey\lib\maven\apache-maven-3.9.15\bin\mvn`.
+You need Java 17 and Maven installed.
 
-Build the jar first:
+Run directly (no JAR build needed):
 ```
 cd "C:\Users\AA\Desktop\NYU\26 spring\java\final project\StudyPlanner"
-mvn package -q
+mvn exec:java
 ```
 
-Then run it:
+Or build a JAR first, then run it:
 ```
+mvn package -q
 java -jar target/study-planner-1.0-SNAPSHOT.jar
 ```
 
-If you want the AI suggestions to work, set your Anthropic API key before running:
+To enable AI features, set your Anthropic API key before running:
 ```
 set ANTHROPIC_API_KEY=sk-ant-...
-java -jar target/study-planner-1.0-SNAPSHOT.jar
+mvn exec:java
 ```
 
-If you don't set it, the app still works — the AI option just tells you the key
-is missing instead of crashing.
-
-To run just the tests:
+To run the tests:
 ```
 mvn test
 ```
@@ -51,160 +48,195 @@ mvn test
 
 ## What the menu does
 
-When you run the app you get a simple numbered menu:
-
 ```
-1. Add study item       — enter a title, deadline, total hours, and days/week
-2. View all items       — shows everything you've added with current progress
-3. Generate plan        — picks daily or weekly spread and prints the schedule
-4. Record progress      — log hours you've completed; remaining hours update automatically
-5. Get AI suggestion    — sends your item to Claude and prints a short pacing tip
-6. Delete item          — removes an item and its plan
-0. Exit
+──────── Study Planner ────────
+1.  Add study item
+2.  View all items
+3.  Generate plan
+4.  Record progress
+5.  Add note to study item
+6.  Edit daily schedule
+──────── AI Features ───────────
+7.  AI: Study roadmap (for selected item)
+8.  AI: Optimize plan (for selected item)
+──────── Manage Items ──────────
+9.  Delete item
+10. Update item
+11. View current plan
+12. Export to CSV
+0.  Exit
 ```
 
-Everything is text-based, no GUI. You just type numbers and press Enter.
+**Option 1 — Add study item**
+Enter a title, deadline (YYYY-MM-DD), total hours, and days/week. You'll also be
+asked to choose a schedule mode (even split or heavier days — see below) and
+optionally provide a folder of study materials for per-session file/page suggestions.
+
+**Option 3 — Generate plan**
+Select an item and choose Daily or Weekly strategy. The plan is printed immediately.
+Today's session is marked with `← TODAY`.
+
+**Option 4 — Record progress**
+Log hours for a session. After saving, the plan is automatically regenerated starting
+from tomorrow so the remaining hours are spread evenly across future days — you never
+have to manually adjust the schedule.
+
+**Option 5 — Add note**
+Attach free-text notes or comments to any study item. Notes appear in View all items
+and View current plan.
+
+**Option 6 — Edit daily schedule**
+Change the schedule mode (even split or heavier days) for any existing item without
+re-creating it.
+
+**Options 7 & 8 — AI**
+Both prompt you to select a specific item first. Option 7 generates a basics-to-advanced
+study roadmap for that item's subject. Option 8 analyzes that item's plan and suggests
+optimizations.
+
+**Option 11 — View current plan**
+Shows the full plan, any notes, and a material coverage suggestion (if a folder was set).
+
+**Option 12 — Export to CSV**
+Writes a `.csv` file with one ITEM row per study goal and one SESSION row per planned
+date. Enter a folder path or a full file path.
+
+---
+
+## Schedule modes
+
+When you add or edit an item you choose how hours are distributed:
+
+**Even split** — hours are divided equally across all study days. This is the default.
+
+**Heavier days** — you pick specific days of the week (e.g. Sat + Sun) that get a
+multiplier (default 1.5×) more hours than regular days. The planner guarantees those
+days appear in the schedule every week. You can change the mode any time with option 6.
 
 ---
 
 ## How the scheduling works
 
-When you generate a plan, you choose between two strategies:
+**Daily strategy** — spreads remaining hours across individual days from today to the
+deadline, respecting your days/week setting. Within each 7-day window it fills the
+first N days. When heavier days are configured those DOWs always appear and receive
+`multiplier × base` hours; remaining daysPerWeek slots are filled by other days.
 
-**Daily** — takes your remaining hours and spreads them across your available study
-days up until the deadline. It uses a simple 7-day window system starting from today,
-and within each window it fills the first N days (where N is the days/week you said
-you're available). So if you have 2 weeks and 3 days/week, you get 6 sessions with
-your hours split evenly across them.
+**Weekly strategy** — one block per calendar week with your total weekly target. Good
+for when you want flexibility in when exactly you study within a week.
 
-**Weekly** — instead of individual days, it gives you one block per week with your
-total weekly target. Good for when you want flexibility in when exactly you study
-within each week.
+Both strategies warn you if the deadline is too tight. They don't refuse to make a
+plan — they just flag it as infeasible.
 
-Both strategies warn you if the deadline is too tight (e.g. you have 40 hours left
-but only 3 days). They don't refuse to make a plan — they just flag it as infeasible.
+After you log progress (option 4), the plan is automatically re-generated starting
+from **tomorrow** so the remaining hours are redistributed. You never see stale
+scheduled hours — what's on screen is always what you still need to do.
+
+---
+
+## Material folder
+
+When adding or updating an item you can provide a folder path containing your study
+materials (slides, PDFs, etc.). The app scans the folder with `Files.list()`, counts
+the files, and estimates total pages (50 KB ≈ 1 page). When you view the plan it
+prints a per-session suggestion:
+
+```
+Material suggestion: ~3.0 file(s)/session, ~31 page(s)/session (15 files, ~157 total pages)
+```
+
+---
+
+## Persistence
+
+Your data is automatically saved to `study_planner_data.json` in the project folder
+after every change (add, delete, update, record progress). It is loaded back on
+startup, so nothing is lost between sessions.
+
+The JSON is written manually using `Files.writeString` (no third-party library). Notes,
+heavier-days config, material folder info, and progress are all persisted. Generated
+plans are not saved — regenerating them from the stored item data is instant.
 
 ---
 
 ## How the code is organized
 
-The project is split into four packages plus a Main class:
-
-**model** — the data objects. `StudyItem` holds everything about a study goal
-(title, deadline, hours, how many days/week you can study, and how many hours you've
-done so far). `StudySession` is just one scheduled block: a date, the item title,
-and how many hours are planned for that day.
-
-**plan** — the scheduling logic. `PlanningStrategy` is an interface with one method:
-`generateSessions(item, startDate)`. `DailyPlanningStrategy` and
-`WeeklyPlanningStrategy` both implement it. `StudyPlan` is what you get back — a
-list of sessions plus a flag for whether the plan is feasible. The reason there's an
-interface here is so that `PlannerManager` doesn't care how sessions are generated —
-you could add a third strategy (say, Pomodoro blocks) without touching anything else.
-
-**service** — two classes. `PlannerManager` is the main coordinator: it stores your
-study items in a `LinkedHashMap` (keeps insertion order), stores generated plans, and
-handles adding/removing items and recording progress. `AIStudyAssistant` is the only
-class that makes network calls — it talks to the Anthropic API, builds the request
-JSON by hand, and parses the response. If the API key isn't set, it just returns a
-message saying so. Nothing else in the app knows or cares whether AI is available.
-
-**util** — just `InputValidator`, a utility class with static methods for validating
-every kind of input: titles, hours, deadlines (must be YYYY-MM-DD and in the future),
-days per week (1–7), and progress hours. All validation happens here, called from
-`Main.java`. The model and service classes don't re-validate — they trust the input
-is already clean by the time it reaches them.
-
-**Main.java** — the entry point. It runs the menu loop, calls `InputValidator` before
-doing anything with user input, and delegates everything else to `PlannerManager` or
-`AIStudyAssistant`.
+```
+src/main/java/studyplanner/
+├── Main.java               entry point — menu loop
+├── AppController.java      static facade — wires all services together
+├── CommandRouter.java      routes menu choices, owns the Scanner
+├── StudyItem.java          domain model — one study goal
+├── StudySession.java       domain model — one scheduled block
+├── StudyPlan.java          result of plan generation (list of sessions)
+├── PlanningStrategies.java PlanningStrategy interface + Daily + Weekly
+├── PlannerManager.java     in-memory store, stream queries
+├── AIStudyAssistant.java   Anthropic API wrapper (CompletableFuture)
+├── PersistenceService.java NIO JSON save/load
+├── ExportService.java      CSV export
+├── InputValidator.java     static validation utility
+└── exceptions/
+    └── StudyPlannerException.java
+```
 
 ---
 
-## Design decisions worth explaining
+## Design decisions
 
-**Why the Strategy pattern for planning?**
-I originally had all the scheduling logic inside `PlannerManager`, but it got messy
-fast. Moving it into separate strategy classes means each one has one job and is easy
-to test in isolation. The interface also makes it obvious how to add more strategies
-later.
+**Strategy pattern for planning**
+`PlannerManager.generatePlan()` takes a `PlanningStrategy` — it doesn't know or care
+whether you picked Daily or Weekly. Adding a new strategy (e.g. Pomodoro blocks)
+requires zero changes outside the new class.
 
-**Why is hoursCompleted private?**
-`StudyItem.hoursCompleted` can only be changed through `addProgress()`, which checks
-that you're not adding negative hours and caps the total at `totalHours`. If it were
-public, something could accidentally set it to 500 or -3. The method enforces the
-rule that completed hours always make sense relative to the total.
+**Encapsulated progress**
+`StudyItem.hoursCompleted` can only be changed through `addProgress()`, which validates
+input and caps the total at `totalHours`. Direct field access would make it easy to set
+it to an invalid value.
 
-**Why is AI isolated in its own class?**
-A few reasons. First, it makes the app testable — unit tests never call the network,
-they just don't touch `AIStudyAssistant`. Second, it means the app runs fine with no
-API key. Third, if I ever wanted to swap Anthropic for a different AI provider, I'd
-only change one file. The rest of the app just calls `ai.getSuggestion(item)` and
-gets a string back.
+**Facade pattern**
+`AppController` is the only class the menu ever calls. It delegates to `PlannerManager`,
+`AIStudyAssistant`, `PersistenceService`, and `ExportService`. The menu knows nothing
+about how services work internally — this makes it easy to swap implementations.
 
-**Why not use a JSON library for the API calls?**
-The Anthropic response format is consistent enough that I could parse out the text
-content with a few string operations. Adding a library like `org.json` would work
-fine but seemed like overkill for one API call. The manual parsing is a bit fragile
-but there are comments explaining what it's looking for.
+**AI isolation**
+`AIStudyAssistant` is the only class that makes network calls. Unit tests never touch
+it. The rest of the app calls it and gets a `CompletableFuture<String>` back. If the
+API key is missing it returns a fallback message — nothing crashes.
 
-**Why LinkedHashMap for storing items?**
-Regular HashMap doesn't preserve insertion order, which means the menu list could
-show items in a random order every time. LinkedHashMap keeps them in the order you
-added them, which feels more natural when you're looking at a list of your own
-study goals.
+**Manual JSON**
+The Anthropic response format is consistent enough for simple string parsing. The
+persistence JSON is also hand-built (no Jackson/Gson). This keeps `pom.xml` at one
+dependency (JUnit).
+
+**LinkedHashMap for item storage**
+Preserves insertion order so the menu list always shows items in the order you added
+them, not a random HashMap order.
 
 ---
 
 ## Testing
 
-There are 38 unit tests across 5 test classes, all using JUnit 5:
+48 unit tests across 6 test classes, all using JUnit 5:
 
-`StudyItemTest` (6 tests) — checks that items are created correctly, that progress
-updates work, that you can't go over the total hours, that negative progress throws
-an exception, and that each item gets a unique ID.
+| Class | Tests | What it covers |
+|---|---|---|
+| `StudyItemTest` | 6 | Creation, progress update, cap at totalHours, negative guard, unique IDs |
+| `DailyPlanningStrategyTest` | 6 | Session generation, completed item, hour totals, deadline boundary, days/week limit |
+| `WeeklyPlanningStrategyTest` | 5 | Multi-week plans, completed item, even distribution, one-day deadline |
+| `PlannerManagerTest` | 12 | Add/retrieve/remove, progress, plan generation, stream queries, null guard |
+| `PersistenceServiceTest` | 6 | Round-trip save/load, empty list, multi-item, special chars, progress field |
+| `InputValidatorTest` | 13 | Every validator: titles, hours, deadlines, date formats, days/week, progress |
 
-`DailyPlanningStrategyTest` (6 tests) — checks that sessions get generated, that a
-completed item produces no sessions, that the total planned hours roughly match the
-remaining hours, that no session is scheduled after the deadline, and that the
-days-per-week limit is actually respected.
-
-`WeeklyPlanningStrategyTest` (5 tests) — checks multi-week plans, completed items,
-even hour distribution across weeks, and the edge case of a one-day deadline.
-
-`PlannerManagerTest` (8 tests) — checks adding and retrieving items, removing items,
-recording progress, generating plans, the not-found exception, the null guard, and
-that the item list grows correctly.
-
-`InputValidatorTest` (13 tests) — covers every validator: empty/null titles, zero
-and negative hours, unrealistically large hours, past deadlines, bad date formats,
-days per week out of range, and zero progress hours.
-
-None of the tests touch `AIStudyAssistant` or make any network calls. The AI feature
-is tested manually.
-
----
-
-## What's not included
-
-To keep this manageable as a solo semester project, I left out a few things on purpose:
-
-- **No file persistence** — everything resets when you close the app. Adding JSON
-  save/load would be the most useful next step.
-- **No login or user accounts** — it's single-user only.
-- **No database** — items are stored in memory (a HashMap).
-- **No calendar integration** — it generates dates but doesn't connect to Google
-  Calendar or anything like that.
+No tests touch `AIStudyAssistant` or make network calls.
 
 ---
 
 ## Libraries used
 
-- **JUnit Jupiter 5.10.0** — for unit tests
-- **Anthropic Messages API** — for the AI suggestion feature (no Java SDK, just
-  direct HTTP calls using `java.net.http.HttpClient` which is built into Java 11+)
+- **JUnit Jupiter 5.10.0** — unit tests
+- **Anthropic Messages API** — AI features via `java.net.http.HttpClient` (Java 11+ built-in)
 
-No other third-party libraries. The pom.xml only has one dependency (JUnit).
+No other third-party libraries. `pom.xml` has one dependency.
 
 ---
 

@@ -92,7 +92,9 @@ public class CommandRouter implements AutoCloseable {
         for (int i = 0; i < items.size(); i++) {
             StudyItem it = items.get(i);
             System.out.printf("%d. %s", i + 1, it);
-            if (!it.getHeavierDays().isEmpty()) {
+            if (!it.getCustomHoursPerDow().isEmpty()) {
+                System.out.printf(" [custom: %s]", formatCustomPattern(it.getCustomHoursPerDow()));
+            } else if (!it.getHeavierDays().isEmpty()) {
                 System.out.printf(" [heavier: %s x%.1f]", formatDays(it.getHeavierDays()), it.getHeavierDayMultiplier());
             }
             if (!it.getMaterialFolder().isEmpty()) {
@@ -123,7 +125,6 @@ public class CommandRouter implements AutoCloseable {
         var strategy = choice.equals("2") ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
         StudyPlan plan = AppController.generatePlan(item.getId(), strategy);
         System.out.println(plan);
-        printTodayReminder(item, plan);
     }
 
     // ── Record progress ────────────────────────────────────────────────────────
@@ -136,8 +137,21 @@ public class CommandRouter implements AutoCloseable {
         AppController.recordProgress(item.getId(), hours);
         System.out.printf("Saved. Total remaining for '%s': %.1f hours%n",
                 item.getTitle(), item.getRemainingHours());
-        // show today's remaining against the plan
-        AppController.getPlan(item.getId()).ifPresent(plan -> printTodayReminder(item, plan));
+
+        // auto-redistribute remaining hours across future days
+        AppController.getPlan(item.getId()).ifPresent(existingPlan -> {
+            if (item.isComplete()) {
+                System.out.println("Item complete — no more sessions needed.");
+                return;
+            }
+            PlanningStrategy strategy = existingPlan.getStrategyUsed().equals("Weekly")
+                    ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
+            LocalDate tomorrow = LocalDate.now().plusDays(1);
+            StudyPlan updated = AppController.generatePlan(item.getId(), strategy, tomorrow);
+            System.out.println("Plan updated — remaining hours redistributed:");
+            System.out.println(updated);
+            printMaterialSuggestion(item, updated);
+        });
     }
 
     // ── Add note ───────────────────────────────────────────────────────────────
@@ -264,7 +278,11 @@ public class CommandRouter implements AutoCloseable {
         AppController.getPlan(item.getId()).ifPresentOrElse(
                 plan -> {
                     System.out.println(plan);
-                    printTodayReminder(item, plan);
+                    List<String> notes = item.getNotes();
+                    if (!notes.isEmpty()) {
+                        System.out.println("  Notes:");
+                        notes.forEach(n -> System.out.println("    - " + n));
+                    }
                     printMaterialSuggestion(item, plan);
                 },
                 () -> System.out.println("No plan yet — generate one with option 3."));
@@ -295,17 +313,19 @@ public class CommandRouter implements AutoCloseable {
     // ── Schedule configuration helper ─────────────────────────────────────────
 
     /**
-     * Asks the user to choose between even-split and heavier-days scheduling.
-     * Updates item in-place.
+     * Asks the user to choose between even-split, heavier-days, and custom-hours scheduling.
+     * Updates item in-place. Selecting a mode clears the settings for the other modes.
      */
     private void configureSchedule(StudyItem item) {
         System.out.println("Schedule mode:");
-        System.out.println("  1. Even split — same hours every study day");
-        System.out.println("  2. Heavier days — pick specific days of the week that get more time");
+        System.out.println("  1. Even split    — same hours every study day");
+        System.out.println("  2. Heavier days  — specific days of the week get more time (multiplier)");
+        System.out.println("  3. Custom hours  — set exact hours for each day of the week");
         System.out.print("Choice (default 1): ");
         String choice = scanner.nextLine().trim();
 
         if (choice.equals("2")) {
+            item.setCustomHoursPerDow(new java.util.LinkedHashMap<>());   // clear custom mode
             System.out.println("Enter heavier days (comma-separated):");
             System.out.println("  1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun");
             System.out.print("Days: ");
@@ -317,24 +337,64 @@ public class CommandRouter implements AutoCloseable {
                 return;
             }
             item.setHeavierDays(heavierDays);
-
             System.out.print("Hours multiplier for heavier days (default 1.5): ");
             String multInput = scanner.nextLine().trim();
             if (!multInput.isEmpty()) {
                 try {
-                    double m = Double.parseDouble(multInput);
-                    item.setHeavierDayMultiplier(m);
+                    item.setHeavierDayMultiplier(Double.parseDouble(multInput));
                 } catch (NumberFormatException e) {
                     System.out.println("Invalid multiplier — using 1.5.");
                     item.setHeavierDayMultiplier(1.5);
                 }
             }
             System.out.printf("Heavier days set: %s (%.1fx hours)%n",
-                    formatDays(heavierDays), item.getHeavierDayMultiplier());
+                    formatDays(item.getHeavierDays()), item.getHeavierDayMultiplier());
+
+        } else if (choice.equals("3")) {
+            item.setHeavierDays(new HashSet<>());   // clear heavier-days mode
+            java.util.Map<DayOfWeek, Double> pattern = buildCustomPattern();
+            if (pattern.isEmpty()) {
+                System.out.println("No hours entered — using even split.");
+                item.setCustomHoursPerDow(new java.util.LinkedHashMap<>());
+                return;
+            }
+            item.setCustomHoursPerDow(pattern);
+            // auto-update daysPerWeek to match the number of custom days
+            item.setDaysAvailablePerWeek(pattern.size());
+            System.out.print("Custom pattern saved: ");
+            System.out.println(formatCustomPattern(item.getCustomHoursPerDow()));
+
         } else {
             item.setHeavierDays(new HashSet<>());
+            item.setCustomHoursPerDow(new java.util.LinkedHashMap<>());
             System.out.println("Even split selected.");
         }
+    }
+
+    /**
+     * Prompts the user to enter hours for each day of the week (Mon–Sun).
+     * Days with 0 or blank input are excluded from the pattern.
+     */
+    private java.util.Map<DayOfWeek, Double> buildCustomPattern() {
+        java.util.Map<DayOfWeek, Double> pattern = new java.util.LinkedHashMap<>();
+        DayOfWeek[] order = {
+            DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+            DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY
+        };
+        System.out.println("Enter hours for each day (0 or Enter to skip that day):");
+        for (DayOfWeek dow : order) {
+            String label = dow.name().charAt(0) + dow.name().substring(1, 3).toLowerCase();
+            System.out.printf("  %-9s: ", label);
+            String input = scanner.nextLine().trim();
+            if (input.isEmpty() || input.equals("0")) continue;
+            try {
+                double h = Double.parseDouble(input);
+                if (h > 0) pattern.put(dow, h);
+            } catch (NumberFormatException e) {
+                System.out.println("  Invalid — skipping " + label);
+            }
+        }
+        return pattern;
     }
 
     // ── Material folder scanning ───────────────────────────────────────────────
@@ -368,26 +428,6 @@ public class CommandRouter implements AutoCloseable {
         } catch (Exception e) {
             System.out.println("Could not scan folder: " + e.getMessage());
         }
-    }
-
-    // ── Today's remaining hours helper ────────────────────────────────────────
-
-    /**
-     * Prints today's planned hours and how much is still remaining based on
-     * hours already logged today (hoursLoggedToday).
-     */
-    private void printTodayReminder(StudyItem item, StudyPlan plan) {
-        LocalDate today = LocalDate.now();
-        double plannedToday = plan.getSessions().stream()
-                .filter(s -> s.getDate().equals(today))
-                .mapToDouble(StudySession::getHoursPlanned)
-                .sum();
-        if (plannedToday <= 0) return;
-
-        double loggedToday  = item.getHoursLoggedToday();
-        double remainToday  = Math.max(0, plannedToday - loggedToday);
-        System.out.printf("  Today's plan: %.1fh planned | %.1fh logged | %.1fh remaining today%n",
-                plannedToday, loggedToday, remainToday);
     }
 
     // ── Material suggestion helper ─────────────────────────────────────────────
@@ -465,6 +505,16 @@ public class CommandRouter implements AutoCloseable {
         return days.stream()
                 .sorted()
                 .map(d -> d.name().charAt(0) + d.name().substring(1, 3).toLowerCase())
+                .collect(Collectors.joining(", "));
+    }
+
+    private String formatCustomPattern(java.util.Map<DayOfWeek, Double> pattern) {
+        return pattern.entrySet().stream()
+                .map(e -> {
+                    String d = e.getKey().name().charAt(0)
+                            + e.getKey().name().substring(1, 3).toLowerCase();
+                    return d + "=" + e.getValue() + "h";
+                })
                 .collect(Collectors.joining(", "));
     }
 

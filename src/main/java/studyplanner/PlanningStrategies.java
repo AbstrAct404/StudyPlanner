@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 // Strategy pattern (Lec2 — OOP): one interface, two concrete scheduling algorithms.
@@ -26,6 +27,11 @@ class DailyPlanningStrategy implements PlanningStrategy {
         double remaining = item.getRemainingHours();
         if (remaining <= 0) return new ArrayList<>();
 
+        // custom per-DOW hours take highest priority
+        if (!item.getCustomHoursPerDow().isEmpty()) {
+            return generateCustomHoursSessions(item, startDate, remaining);
+        }
+
         Set<DayOfWeek> heavierDays = item.getHeavierDays();
         if (!heavierDays.isEmpty()) {
             return generateHeavierDaySessions(item, startDate, remaining);
@@ -39,6 +45,32 @@ class DailyPlanningStrategy implements PlanningStrategy {
         List<StudySession> sessions = new ArrayList<>();
         for (LocalDate day : studyDays) {
             sessions.add(new StudySession(day, item.getTitle(), hoursPerDay));
+        }
+        return sessions;
+    }
+
+    /**
+     * Custom per-day-of-week mode.
+     * Iterates day-by-day from startDate to deadline; whenever a day's DOW is in the
+     * custom map, schedules a session with exactly those hours — capped to whatever
+     * remaining hours are still needed. Stops once remaining hours are fully covered.
+     */
+    private List<StudySession> generateCustomHoursSessions(
+            StudyItem item, LocalDate startDate, double remaining) {
+
+        Map<DayOfWeek, Double> pattern = item.getCustomHoursPerDow();
+        List<StudySession> sessions = new ArrayList<>();
+        double scheduled = 0;
+        LocalDate current = startDate;
+
+        while (!current.isAfter(item.getDeadline()) && scheduled < remaining - 0.001) {
+            Double h = pattern.get(current.getDayOfWeek());
+            if (h != null && h > 0) {
+                double actual = Math.round(Math.min(h, remaining - scheduled) * 10.0) / 10.0;
+                sessions.add(new StudySession(current, item.getTitle(), actual));
+                scheduled += h;
+            }
+            current = current.plusDays(1);
         }
         return sessions;
     }

@@ -66,12 +66,17 @@ public class PlannerManager {
     }
 
     public StudyPlan generatePlan(String id, PlanningStrategy strategy) {
-        StudyItem item = getStudyItem(id);
-        List<StudySession> sessions = strategy.generateSessions(item, LocalDate.now());
+        return generatePlan(id, strategy, LocalDate.now());
+    }
 
-        // a plan is feasible if sessions exist and cover enough hours
-        double covered = sessions.stream().mapToDouble(s -> s.getHoursPlanned()).sum();
-        boolean feasible = !sessions.isEmpty() && covered >= item.getRemainingHours() * 0.95;
+    public StudyPlan generatePlan(String id, PlanningStrategy strategy, LocalDate startDate) {
+        StudyItem item = getStudyItem(id);
+        List<StudySession> sessions = strategy.generateSessions(item, startDate);
+
+        // a plan is feasible if sessions exist and cover enough hours (or item is done)
+        double covered = sessions.stream().mapToDouble(StudySession::getHoursPlanned).sum();
+        boolean feasible = item.isComplete()
+                || (!sessions.isEmpty() && covered >= item.getRemainingHours() * 0.95);
 
         StudyPlan plan = new StudyPlan(item, sessions, strategy.getStrategyName(), feasible);
         plans.put(id, plan);

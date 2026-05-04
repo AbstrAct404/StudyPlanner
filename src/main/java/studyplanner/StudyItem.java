@@ -5,8 +5,11 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,8 +23,12 @@ public class StudyItem {
     private int daysAvailablePerWeek;
 
     // distribution mode: empty set = even; non-empty = those days get heavierDayMultiplier × hours
-    private Set<DayOfWeek> heavierDays      = new HashSet<>();
+    private Set<DayOfWeek> heavierDays          = new HashSet<>();
     private double          heavierDayMultiplier = 1.5;
+
+    // custom mode: day-of-week → exact hours for that day (empty = not in custom mode)
+    // LinkedHashMap preserves Mon→Sun insertion order for display
+    private Map<DayOfWeek, Double> customHoursPerDow = new LinkedHashMap<>();
 
     // today's progress — transient, not persisted, resets automatically on a new day
     private double    hoursLoggedToday = 0;
@@ -65,6 +72,13 @@ public class StudyItem {
     public void setHeavierDayMultiplier(double m) {
         if (m <= 0) throw new IllegalArgumentException("Multiplier must be positive.");
         this.heavierDayMultiplier = m;
+    }
+
+    public Map<DayOfWeek, Double> getCustomHoursPerDow() {
+        return Collections.unmodifiableMap(customHoursPerDow);
+    }
+    public void setCustomHoursPerDow(Map<DayOfWeek, Double> map) {
+        this.customHoursPerDow = new LinkedHashMap<>(map);
     }
 
     // ── progress ───────────────────────────────────────────────────────────────

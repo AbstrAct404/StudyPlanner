@@ -33,8 +33,8 @@ public class Main {
         System.out.println("5.  Add note to study item");
         System.out.println("6.  Edit daily schedule");
         System.out.println("──────── AI Features ───────────");
-        System.out.println("7.  AI: Study roadmap (for selected item)");
-        System.out.println("8.  AI: Optimize plan (for selected item)");
+        System.out.println("7.  AI: Study roadmap");
+        System.out.println("8.  AI: Optimize plan");
         System.out.println("──────── Manage Items ──────────");
         System.out.println("9.  Delete item");
         System.out.println("10. Update item");
