@@ -1,0 +1,485 @@
+package studyplanner;
+
+import studyplanner.exceptions.StudyPlannerException;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Scanner;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+
+public class CommandRouter implements AutoCloseable {
+
+    private final Scanner scanner;
+
+    public CommandRouter(Scanner scanner) {
+        this.scanner = scanner;
+    }
+
+    // read one menu choice and dispatch it; returns false when the user exits
+    public boolean routeNextCommand() {
+        String choice = scanner.nextLine().trim();
+        try {
+            switch (choice) {
+                case "1"  -> { addItem();           AppController.save(); }
+                case "2"  -> viewItems();
+                case "3"  -> { generatePlan();      AppController.save(); }
+                case "4"  -> { recordProgress();    AppController.save(); }
+                case "5"  -> { addNote();            AppController.save(); }
+                case "6"  -> { editSchedule();       AppController.save(); }
+                case "7"  -> studyRoadmap();
+                case "8"  -> planOptimization();
+                case "9"  -> { deleteItem();         AppController.save(); }
+                case "10" -> { updateItem();         AppController.save(); }
+                case "11" -> viewCurrentPlan();
+                case "12" -> exportData();
+                case "0"  -> { AppController.save(); return false; }
+                default   -> System.out.println("Invalid option. Try again.");
+            }
+        } catch (IllegalArgumentException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+        return true;
+    }
+
+    // ── Add item ───────────────────────────────────────────────────────────────
+
+    private void addItem() {
+        System.out.print("Title: ");
+        String title = InputValidator.validateTitle(scanner.nextLine());
+
+        System.out.print("Deadline (YYYY-MM-DD): ");
+        LocalDate deadline = InputValidator.validateDeadline(scanner.nextLine());
+
+        System.out.print("Total hours needed: ");
+        double hours = InputValidator.validateHours(parseDouble(scanner.nextLine()));
+
+        System.out.print("Study days per week (1-7): ");
+        int days = InputValidator.validateDaysPerWeek(parseInt(scanner.nextLine()));
+
+        StudyItem item = new StudyItem(title, deadline, hours, days);
+
+        // schedule mode replaces the old weekend confirmation
+        configureSchedule(item);
+
+        // optional material folder
+        System.out.print("Material folder path (Enter to skip): ");
+        String folder = scanner.nextLine().trim();
+        if (!folder.isEmpty()) {
+            scanMaterialFolder(item, folder);
+        }
+
+        AppController.addStudyItem(item);
+        System.out.println("Added: " + item);
+    }
+
+    // ── View items ─────────────────────────────────────────────────────────────
+
+    private void viewItems() {
+        List<StudyItem> items = AppController.getItemsSortedByDeadline();
+        if (items.isEmpty()) { System.out.println("No study items yet."); return; }
+        System.out.println();
+        for (int i = 0; i < items.size(); i++) {
+            StudyItem it = items.get(i);
+            System.out.printf("%d. %s", i + 1, it);
+            if (!it.getHeavierDays().isEmpty()) {
+                System.out.printf(" [heavier: %s x%.1f]", formatDays(it.getHeavierDays()), it.getHeavierDayMultiplier());
+            }
+            if (!it.getMaterialFolder().isEmpty()) {
+                System.out.printf(" [folder: %d file(s), ~%d pg(s)]",
+                        it.getMaterialFileCount(), it.getEstimatedTotalPages());
+            }
+            System.out.println();
+            List<String> notes = it.getNotes();
+            if (!notes.isEmpty()) {
+                System.out.println("   Notes:");
+                notes.forEach(n -> System.out.println("     - " + n));
+            }
+        }
+        System.out.printf("%nTotal remaining: %.1f h across %d incomplete item(s).%n",
+                AppController.getTotalRemainingHours(), AppController.getIncompleteItems().size());
+    }
+
+    // ── Generate plan ──────────────────────────────────────────────────────────
+
+    private void generatePlan() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+
+        System.out.println("Strategy:  1. Daily   2. Weekly");
+        System.out.print("Choice: ");
+        String choice = scanner.nextLine().trim();
+
+        var strategy = choice.equals("2") ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
+        StudyPlan plan = AppController.generatePlan(item.getId(), strategy);
+        System.out.println(plan);
+        printTodayReminder(item, plan);
+    }
+
+    // ── Record progress ────────────────────────────────────────────────────────
+
+    private void recordProgress() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+        System.out.print("Hours completed this session: ");
+        double hours = InputValidator.validateProgressHours(parseDouble(scanner.nextLine()));
+        AppController.recordProgress(item.getId(), hours);
+        System.out.printf("Saved. Total remaining for '%s': %.1f hours%n",
+                item.getTitle(), item.getRemainingHours());
+        // show today's remaining against the plan
+        AppController.getPlan(item.getId()).ifPresent(plan -> printTodayReminder(item, plan));
+    }
+
+    // ── Add note ───────────────────────────────────────────────────────────────
+
+    private void addNote() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+
+        List<String> existing = item.getNotes();
+        if (!existing.isEmpty()) {
+            System.out.println("Existing notes:");
+            for (int i = 0; i < existing.size(); i++) {
+                System.out.printf("  %d. %s%n", i + 1, existing.get(i));
+            }
+        }
+
+        System.out.print("New note (Enter to cancel): ");
+        String note = scanner.nextLine().trim();
+        if (note.isEmpty()) { System.out.println("Cancelled."); return; }
+        item.addNote(note);
+        System.out.println("Note added.");
+    }
+
+    // ── Edit schedule ──────────────────────────────────────────────────────────
+
+    private void editSchedule() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+        configureSchedule(item);
+        System.out.println("Schedule updated for: " + item.getTitle());
+    }
+
+    // ── AI: roadmap (item-selection-first) ────────────────────────────────────
+
+    private void studyRoadmap() {
+        System.out.println("Select the study item for the AI roadmap:");
+        StudyItem item = selectItem();
+        if (item == null) return;
+        String subject = item.getTitle();
+        System.out.println("Building roadmap for \"" + subject + "\"...");
+        awaitAI(AppController.getStudyRoadmapAsync(subject));
+    }
+
+    // ── AI: optimize (item-selection-first) ───────────────────────────────────
+
+    private void planOptimization() {
+        System.out.println("Select the study item to optimize:");
+        StudyItem item = selectItem();
+        if (item == null) return;
+
+        Optional<StudyPlan> planOpt = AppController.getPlan(item.getId());
+        if (planOpt.isEmpty()) {
+            System.out.println("No plan found for '" + item.getTitle() + "'. Generate one with option 3 first.");
+            return;
+        }
+
+        List<StudySession> sessions = planOpt.get().getSessions().stream()
+                .sorted(Comparator.comparing(StudySession::getDate))
+                .collect(Collectors.toList());
+
+        System.out.println("Analyzing " + sessions.size() + " session(s) for '" + item.getTitle() + "'...");
+        awaitAI(AppController.getPlanOptimizationAsync(sessions));
+    }
+
+    // ── Delete item ────────────────────────────────────────────────────────────
+
+    private void deleteItem() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+        AppController.removeStudyItem(item.getId());
+        System.out.println("Deleted: " + item.getTitle());
+    }
+
+    // ── Update item ────────────────────────────────────────────────────────────
+
+    private void updateItem() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+        System.out.println("Update:  1. Title  2. Deadline  3. Total hours  4. Days/week  5. Material folder");
+        System.out.print("Choice: ");
+        String choice = scanner.nextLine().trim();
+        switch (choice) {
+            case "1" -> {
+                System.out.print("New title: ");
+                item.setTitle(InputValidator.validateTitle(scanner.nextLine()));
+                System.out.println("Title updated.");
+            }
+            case "2" -> {
+                System.out.print("New deadline (YYYY-MM-DD): ");
+                item.setDeadline(InputValidator.validateDeadline(scanner.nextLine()));
+                System.out.println("Deadline updated.");
+            }
+            case "3" -> {
+                System.out.print("New total hours: ");
+                item.setTotalHours(InputValidator.validateHours(parseDouble(scanner.nextLine())));
+                System.out.println("Total hours updated.");
+            }
+            case "4" -> {
+                System.out.print("New days/week (1-7): ");
+                item.setDaysAvailablePerWeek(InputValidator.validateDaysPerWeek(parseInt(scanner.nextLine())));
+                System.out.println("Days/week updated.");
+            }
+            case "5" -> {
+                System.out.print("Material folder path (Enter to clear): ");
+                String folder = scanner.nextLine().trim();
+                if (folder.isEmpty()) {
+                    item.setMaterialFolder("");
+                    item.setMaterialFileCount(0);
+                    item.setEstimatedTotalPages(0);
+                    System.out.println("Material folder cleared.");
+                } else {
+                    scanMaterialFolder(item, folder);
+                }
+            }
+            default -> System.out.println("Invalid choice.");
+        }
+    }
+
+    // ── View current plan ──────────────────────────────────────────────────────
+
+    private void viewCurrentPlan() {
+        StudyItem item = selectItem();
+        if (item == null) return;
+        AppController.getPlan(item.getId()).ifPresentOrElse(
+                plan -> {
+                    System.out.println(plan);
+                    printTodayReminder(item, plan);
+                    printMaterialSuggestion(item, plan);
+                },
+                () -> System.out.println("No plan yet — generate one with option 3."));
+    }
+
+    // ── Export ─────────────────────────────────────────────────────────────────
+
+    private void exportData() {
+        System.out.print("Export path (folder or .csv file): ");
+        String input = scanner.nextLine().trim();
+        if (input.isEmpty()) { System.out.println("Path required."); return; }
+
+        Path path = Path.of(input);
+        if (Files.isDirectory(path)) {
+            path = path.resolve("study_export.csv");
+        } else if (!input.endsWith(".csv")) {
+            path = Path.of(input + ".csv");
+        }
+
+        try {
+            AppController.export(path);
+            System.out.println("Exported to: " + path.toAbsolutePath());
+        } catch (StudyPlannerException e) {
+            System.out.println("Export failed: " + e.getMessage());
+        }
+    }
+
+    // ── Schedule configuration helper ─────────────────────────────────────────
+
+    /**
+     * Asks the user to choose between even-split and heavier-days scheduling.
+     * Updates item in-place.
+     */
+    private void configureSchedule(StudyItem item) {
+        System.out.println("Schedule mode:");
+        System.out.println("  1. Even split — same hours every study day");
+        System.out.println("  2. Heavier days — pick specific days of the week that get more time");
+        System.out.print("Choice (default 1): ");
+        String choice = scanner.nextLine().trim();
+
+        if (choice.equals("2")) {
+            System.out.println("Enter heavier days (comma-separated):");
+            System.out.println("  1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun");
+            System.out.print("Days: ");
+            String dayInput = scanner.nextLine().trim();
+            Set<DayOfWeek> heavierDays = parseDaysOfWeek(dayInput);
+            if (heavierDays.isEmpty()) {
+                System.out.println("No valid days entered — using even split.");
+                item.setHeavierDays(new HashSet<>());
+                return;
+            }
+            item.setHeavierDays(heavierDays);
+
+            System.out.print("Hours multiplier for heavier days (default 1.5): ");
+            String multInput = scanner.nextLine().trim();
+            if (!multInput.isEmpty()) {
+                try {
+                    double m = Double.parseDouble(multInput);
+                    item.setHeavierDayMultiplier(m);
+                } catch (NumberFormatException e) {
+                    System.out.println("Invalid multiplier — using 1.5.");
+                    item.setHeavierDayMultiplier(1.5);
+                }
+            }
+            System.out.printf("Heavier days set: %s (%.1fx hours)%n",
+                    formatDays(heavierDays), item.getHeavierDayMultiplier());
+        } else {
+            item.setHeavierDays(new HashSet<>());
+            System.out.println("Even split selected.");
+        }
+    }
+
+    // ── Material folder scanning ───────────────────────────────────────────────
+
+    /**
+     * Scans the given folder path for files, estimates total pages from file sizes,
+     * and stores the results on the item.
+     * Heuristic: 1 page ≈ 50 KB for typical study PDFs/slides.
+     */
+    private void scanMaterialFolder(StudyItem item, String folderPath) {
+        Path dir = Path.of(folderPath);
+        if (!Files.isDirectory(dir)) {
+            System.out.println("Folder not found or not a directory — skipping material scan.");
+            return;
+        }
+        try {
+            List<Path> files = Files.list(dir)
+                    .filter(Files::isRegularFile)
+                    .collect(Collectors.toList());
+            int fileCount = files.size();
+            long totalBytes = 0;
+            for (Path f : files) {
+                totalBytes += Files.size(f);
+            }
+            long estimatedPages = Math.max(1, totalBytes / (50 * 1024)); // 50 KB per page
+            item.setMaterialFolder(folderPath);
+            item.setMaterialFileCount(fileCount);
+            item.setEstimatedTotalPages(estimatedPages);
+            System.out.printf("Scanned folder: %d file(s), ~%d estimated page(s).%n",
+                    fileCount, estimatedPages);
+        } catch (Exception e) {
+            System.out.println("Could not scan folder: " + e.getMessage());
+        }
+    }
+
+    // ── Today's remaining hours helper ────────────────────────────────────────
+
+    /**
+     * Prints today's planned hours and how much is still remaining based on
+     * hours already logged today (hoursLoggedToday).
+     */
+    private void printTodayReminder(StudyItem item, StudyPlan plan) {
+        LocalDate today = LocalDate.now();
+        double plannedToday = plan.getSessions().stream()
+                .filter(s -> s.getDate().equals(today))
+                .mapToDouble(StudySession::getHoursPlanned)
+                .sum();
+        if (plannedToday <= 0) return;
+
+        double loggedToday  = item.getHoursLoggedToday();
+        double remainToday  = Math.max(0, plannedToday - loggedToday);
+        System.out.printf("  Today's plan: %.1fh planned | %.1fh logged | %.1fh remaining today%n",
+                plannedToday, loggedToday, remainToday);
+    }
+
+    // ── Material suggestion helper ─────────────────────────────────────────────
+
+    /**
+     * If the item has a material folder, prints a suggestion of how many files
+     * and pages the user should cover per study session.
+     */
+    private void printMaterialSuggestion(StudyItem item, StudyPlan plan) {
+        if (item.getMaterialFileCount() <= 0) return;
+        int sessions = plan.getSessions().size();
+        if (sessions == 0) return;
+        double filesPerSession  = (double) item.getMaterialFileCount()  / sessions;
+        double pagesPerSession  = (double) item.getEstimatedTotalPages() / sessions;
+        System.out.printf("  Material suggestion: ~%.1f file(s)/session, ~%.0f page(s)/session " +
+                "(%d files, ~%d total pages)%n",
+                filesPerSession, pagesPerSession,
+                item.getMaterialFileCount(), item.getEstimatedTotalPages());
+    }
+
+    // ── Async AI helper ────────────────────────────────────────────────────────
+
+    private void awaitAI(CompletableFuture<String> future) {
+        try {
+            System.out.println(future.get(36, TimeUnit.SECONDS));
+        } catch (TimeoutException e) {
+            System.out.println("[AI timeout] Request exceeded limit.");
+            future.cancel(true);
+        } catch (InterruptedException | ExecutionException e) {
+            System.out.println("[AI error] " + e.getMessage());
+        }
+    }
+
+    // ── Item selection helper ─────────────────────────────────────────────────
+
+    private StudyItem selectItem() {
+        List<StudyItem> items = AppController.getItemsSortedByDeadline();
+        if (items.isEmpty()) { System.out.println("No study items."); return null; }
+        System.out.println();
+        for (int i = 0; i < items.size(); i++) {
+            System.out.printf("%d. %s%n", i + 1, items.get(i));
+        }
+        System.out.print("Select number: ");
+        try {
+            int idx = parseInt(scanner.nextLine()) - 1;
+            if (idx < 0 || idx >= items.size()) {
+                System.out.println("Invalid selection.");
+                return null;
+            }
+            return items.get(idx);
+        } catch (IllegalArgumentException e) {
+            System.out.println("Invalid input.");
+            return null;
+        }
+    }
+
+    // ── Parsing helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Parses a comma-separated list of day numbers (1=Mon … 7=Sun) into a Set<DayOfWeek>.
+     */
+    private Set<DayOfWeek> parseDaysOfWeek(String input) {
+        Set<DayOfWeek> result = new HashSet<>();
+        if (input == null || input.isBlank()) return result;
+        for (String part : input.split(",")) {
+            try {
+                int n = Integer.parseInt(part.trim());
+                if (n >= 1 && n <= 7) result.add(DayOfWeek.of(n));
+            } catch (NumberFormatException ignored) {}
+        }
+        return result;
+    }
+
+    private String formatDays(Set<DayOfWeek> days) {
+        return days.stream()
+                .sorted()
+                .map(d -> d.name().charAt(0) + d.name().substring(1, 3).toLowerCase())
+                .collect(Collectors.joining(", "));
+    }
+
+    private double parseDouble(String s) {
+        try { return Double.parseDouble(s.trim()); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("Please enter a valid number."); }
+    }
+
+    private int parseInt(String s) {
+        try { return Integer.parseInt(s.trim()); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("Please enter a valid integer."); }
+    }
+
+    @Override
+    public void close() {
+        scanner.close();
+    }
+}

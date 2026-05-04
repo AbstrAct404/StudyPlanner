@@ -1,0 +1,8 @@
+target/
+.vscode/
+*.log
+*.class
+
+HANDOFF.md
+PROGRESS.md
+study_planner_data.json
