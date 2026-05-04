@@ -29,10 +29,32 @@ public class PersistenceService {
 
     // ── public API ─────────────────────────────────────────────────────────────
 
-    public void save(List<StudyItem> items) {
+    /** Returned by load() so the caller gets items and any persisted plans together. */
+    public static class LoadResult {
+        public final List<StudyItem>          items;
+        public final Map<String, List<StudySession>> planSessions;   // itemId → sessions
+        public final Map<String, String>      planStrategies;        // itemId → strategyName
+        public final Map<String, LocalDate>   planDates;             // itemId → generatedOn
+        public final Map<String, Boolean>     planFeasible;          // itemId → feasible
+
+        public LoadResult(List<StudyItem> items,
+                          Map<String, List<StudySession>> planSessions,
+                          Map<String, String> planStrategies,
+                          Map<String, LocalDate> planDates,
+                          Map<String, Boolean> planFeasible) {
+            this.items          = items;
+            this.planSessions   = planSessions;
+            this.planStrategies = planStrategies;
+            this.planDates      = planDates;
+            this.planFeasible   = planFeasible;
+        }
+    }
+
+    public void save(List<StudyItem> items, Map<String, StudyPlan> plans) {
         StringBuilder sb = new StringBuilder("[\n");
         for (int i = 0; i < items.size(); i++) {
-            sb.append(toJson(items.get(i)));
+            StudyPlan plan = plans.get(items.get(i).getId());
+            sb.append(toJson(items.get(i), plan));
             if (i < items.size() - 1) sb.append(",");
             sb.append("\n");
         }
@@ -45,21 +67,28 @@ public class PersistenceService {
         }
     }
 
-    public List<StudyItem> load() {
+    public LoadResult load() {
+        List<StudyItem>          items          = new ArrayList<>();
+        Map<String, List<StudySession>> sessions   = new LinkedHashMap<>();
+        Map<String, String>      strategies     = new LinkedHashMap<>();
+        Map<String, LocalDate>   dates          = new LinkedHashMap<>();
+        Map<String, Boolean>     feasible       = new LinkedHashMap<>();
+
         if (!Files.exists(filePath)) {
-            return new ArrayList<>();
+            return new LoadResult(items, sessions, strategies, dates, feasible);
         }
         try {
             String content = Files.readString(filePath);
-            return parse(content);
+            parse(content, items, sessions, strategies, dates, feasible);
         } catch (IOException ex) {
             throw new StudyPlannerException("Load failed: " + filePath, ex);
         }
+        return new LoadResult(items, sessions, strategies, dates, feasible);
     }
 
     // ── serialisation helpers ──────────────────────────────────────────────────
 
-    private String toJson(StudyItem it) {
+    private String toJson(StudyItem it, StudyPlan plan) {
         // notes serialised as a JSON array of strings
         StringBuilder notesJson = new StringBuilder("[");
         List<String> notes = it.getNotes();
@@ -87,23 +116,61 @@ public class PersistenceService {
             first = false;
         }
 
+        // coveredFiles serialised as a JSON array of strings
+        StringBuilder coveredJson = new StringBuilder("[");
+        List<String> coveredList = new ArrayList<>(it.getCoveredFiles());
+        for (int i = 0; i < coveredList.size(); i++) {
+            coveredJson.append("\"").append(escape(coveredList.get(i))).append("\"");
+            if (i < coveredList.size() - 1) coveredJson.append(",");
+        }
+        coveredJson.append("]");
+
+        // plan sessions serialised as a JSON array of {date, hours} objects
+        StringBuilder sessionsJson = new StringBuilder("[");
+        String planStrategy  = "";
+        String planGenerated = "";
+        boolean planFeasible = false;
+        if (plan != null) {
+            planStrategy  = plan.getStrategyUsed();
+            planGenerated = plan.getGeneratedOn().toString();
+            planFeasible  = plan.isFeasible();
+            List<StudySession> ss = plan.getSessions();
+            for (int i = 0; i < ss.size(); i++) {
+                StudySession s = ss.get(i);
+                sessionsJson.append(String.format("{\"date\":\"%s\",\"hours\":%s}",
+                        s.getDate(), s.getHoursPlanned()));
+                if (i < ss.size() - 1) sessionsJson.append(",");
+            }
+        }
+        sessionsJson.append("]");
+
         return String.format(
                 "  {\"title\":\"%s\",\"deadline\":\"%s\",\"totalHours\":%s," +
                 "\"hoursCompleted\":%s,\"daysPerWeek\":%d," +
                 "\"heavierDays\":\"%s\",\"heavierDayMultiplier\":%s," +
                 "\"customHours\":\"%s\"," +
                 "\"notes\":%s," +
-                "\"materialFolder\":\"%s\",\"materialFileCount\":%d,\"estimatedTotalPages\":%d}",
+                "\"materialFolder\":\"%s\",\"materialFileCount\":%d,\"estimatedTotalPages\":%d," +
+                "\"coveredFiles\":%s," +
+                "\"planStrategy\":\"%s\",\"planGeneratedOn\":\"%s\",\"planFeasible\":%b," +
+                "\"planSessions\":%s}",
                 escape(it.getTitle()), it.getDeadline(),
                 it.getTotalHours(), it.getHoursCompleted(), it.getDaysAvailablePerWeek(),
                 heavierDaysStr, it.getHeavierDayMultiplier(),
                 customHoursStr,
                 notesJson,
-                escape(it.getMaterialFolder()), it.getMaterialFileCount(), it.getEstimatedTotalPages());
+                escape(it.getMaterialFolder()), it.getMaterialFileCount(), it.getEstimatedTotalPages(),
+                coveredJson,
+                planStrategy, planGenerated, planFeasible,
+                sessionsJson);
     }
 
-    private List<StudyItem> parse(String json) {
-        List<StudyItem> result = new ArrayList<>();
+    private void parse(String json,
+                       List<StudyItem>          items,
+                       Map<String, List<StudySession>> planSessions,
+                       Map<String, String>      planStrategies,
+                       Map<String, LocalDate>   planDates,
+                       Map<String, Boolean>     planFeasible) {
         int depth = 0, start = -1;
         for (int i = 0; i < json.length(); i++) {
             char c = json.charAt(i);
@@ -111,8 +178,47 @@ public class PersistenceService {
                 if (depth++ == 0) start = i;
             } else if (c == '}') {
                 if (--depth == 0 && start >= 0) {
-                    StudyItem item = parseObject(json.substring(start, i + 1));
-                    if (item != null) result.add(item);
+                    String obj = json.substring(start, i + 1);
+                    StudyItem item = parseObject(obj);
+                    if (item != null) {
+                        items.add(item);
+                        // read plan fields
+                        String strategy = getStringOrDefault(obj, "planStrategy", "");
+                        String genOn    = getStringOrDefault(obj, "planGeneratedOn", "");
+                        boolean feasible = getBooleanOrDefault(obj, "planFeasible", true);
+                        String sessArr  = getJsonArray(obj, "planSessions");
+                        if (!strategy.isEmpty() && !sessArr.isEmpty()) {
+                            List<StudySession> sessions = parsePlanSessions(sessArr, item.getTitle());
+                            if (!sessions.isEmpty()) {
+                                planSessions.put(item.getId(), sessions);
+                                planStrategies.put(item.getId(), strategy);
+                                planDates.put(item.getId(),
+                                        genOn.isEmpty() ? LocalDate.now() : LocalDate.parse(genOn));
+                                planFeasible.put(item.getId(), feasible);
+                            }
+                        }
+                    }
+                    start = -1;
+                }
+            }
+        }
+    }
+
+    private List<StudySession> parsePlanSessions(String arrayContent, String itemTitle) {
+        List<StudySession> result = new ArrayList<>();
+        // arrayContent is like {"date":"2026-05-04","hours":2.5},{"date":"...","hours":...}
+        int depth = 0, start = -1;
+        for (int i = 0; i < arrayContent.length(); i++) {
+            char c = arrayContent.charAt(i);
+            if (c == '{') { if (depth++ == 0) start = i; }
+            else if (c == '}') {
+                if (--depth == 0 && start >= 0) {
+                    String obj = arrayContent.substring(start, i + 1);
+                    try {
+                        LocalDate date  = LocalDate.parse(getString(obj, "date"));
+                        double hours    = getDouble(obj, "hours");
+                        result.add(new StudySession(date, itemTitle, hours));
+                    } catch (Exception ignored) {}
                     start = -1;
                 }
             }
@@ -184,6 +290,14 @@ public class PersistenceService {
             item.setMaterialFolder(getStringOrDefault(obj, "materialFolder", ""));
             item.setMaterialFileCount((int) getDoubleOrDefault(obj, "materialFileCount", 0));
             item.setEstimatedTotalPages((long) getDoubleOrDefault(obj, "estimatedTotalPages", 0));
+
+            // covered files array
+            String coveredSection = getJsonArray(obj, "coveredFiles");
+            if (!coveredSection.isEmpty()) {
+                for (String f : splitJsonStringArray(coveredSection)) {
+                    item.markFileCovered(f);
+                }
+            }
 
             return item;
         } catch (Exception ex) {

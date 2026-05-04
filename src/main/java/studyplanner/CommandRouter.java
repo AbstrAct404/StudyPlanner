@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -115,22 +116,32 @@ public class CommandRouter implements AutoCloseable {
     // ── Generate plan ──────────────────────────────────────────────────────────
 
     private void generatePlan() {
-        StudyItem item = selectItem();
+        StudyItem item = selectItem(true);
         if (item == null) return;
 
         System.out.println("Strategy:  1. Daily   2. Weekly");
         System.out.print("Choice: ");
         String choice = scanner.nextLine().trim();
 
-        var strategy = choice.equals("2") ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
+        PlanningStrategy strategy = choice.equals("2") ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
         StudyPlan plan = AppController.generatePlan(item.getId(), strategy);
+
+        // if daily plan produces too many sessions, auto-switch to weekly
+        if (!(strategy instanceof WeeklyPlanningStrategy) && plan.getSessions().size() > 50) {
+            System.out.printf(
+                "Note: daily plan would have %d sessions (too many to be useful). Switching to weekly view.%n",
+                plan.getSessions().size());
+            strategy = new WeeklyPlanningStrategy();
+            plan = AppController.generatePlan(item.getId(), strategy);
+        }
+
         System.out.println(plan);
     }
 
     // ── Record progress ────────────────────────────────────────────────────────
 
     private void recordProgress() {
-        StudyItem item = selectItem();
+        StudyItem item = selectItem(true);
         if (item == null) return;
         System.out.print("Hours completed this session: ");
         double hours = InputValidator.validateProgressHours(parseDouble(scanner.nextLine()));
@@ -138,61 +149,179 @@ public class CommandRouter implements AutoCloseable {
         System.out.printf("Saved. Total remaining for '%s': %.1f hours%n",
                 item.getTitle(), item.getRemainingHours());
 
+        // offer to mark material files as covered
+        markCoveredFiles(item);
+
+        // if item just became complete, ask whether to delete it
+        if (item.isComplete()) {
+            System.out.printf("'%s' is now complete! Delete it? (y/n): ", item.getTitle());
+            if (scanner.nextLine().trim().equalsIgnoreCase("y")) {
+                AppController.removeStudyItem(item.getId());
+                System.out.println("Item deleted.");
+                AppController.save();
+                return;
+            }
+            System.out.println("Kept. You can still delete or update it via options 9/10.");
+        }
+
         // auto-redistribute remaining hours across future days
         AppController.getPlan(item.getId()).ifPresent(existingPlan -> {
             if (item.isComplete()) {
-                System.out.println("Item complete — no more sessions needed.");
+                System.out.println("No sessions needed — item is complete.");
                 return;
             }
             PlanningStrategy strategy = existingPlan.getStrategyUsed().equals("Weekly")
                     ? new WeeklyPlanningStrategy() : new DailyPlanningStrategy();
             LocalDate tomorrow = LocalDate.now().plusDays(1);
             StudyPlan updated = AppController.generatePlan(item.getId(), strategy, tomorrow);
-            System.out.println("Plan updated — remaining hours redistributed:");
+
+            // if daily redistribution is still too long, switch to weekly
+            if (!(strategy instanceof WeeklyPlanningStrategy) && updated.getSessions().size() > 50) {
+                strategy = new WeeklyPlanningStrategy();
+                updated = AppController.generatePlan(item.getId(), strategy, tomorrow);
+                System.out.println("Plan updated (switched to weekly — too many daily sessions):");
+            } else {
+                System.out.println("Plan updated — remaining hours redistributed:");
+            }
             System.out.println(updated);
             printMaterialSuggestion(item, updated);
         });
     }
 
-    // ── Add note ───────────────────────────────────────────────────────────────
+    /** Prompts the user to mark which material files they covered in this session. */
+    private void markCoveredFiles(StudyItem item) {
+        if (item.getMaterialFolder() == null || item.getMaterialFolder().isBlank()) return;
+        List<String> allFiles = listFileNames(item.getMaterialFolder());
+        if (allFiles.isEmpty()) return;
+
+        // show uncovered files only
+        List<String> uncovered = new ArrayList<>();
+        for (String f : allFiles) {
+            if (!item.isFileCovered(f)) uncovered.add(f);
+        }
+        if (uncovered.isEmpty()) {
+            System.out.println("All material files already marked as covered.");
+            return;
+        }
+
+        System.out.println("Files covered in this session? (Enter numbers separated by commas, or Enter to skip)");
+        for (int i = 0; i < uncovered.size(); i++) {
+            System.out.printf("  %d. %s%n", i + 1, uncovered.get(i));
+        }
+        System.out.print("Numbers: ");
+        String input = scanner.nextLine().trim();
+        if (input.isEmpty()) return;
+
+        int marked = 0;
+        for (String part : input.split(",")) {
+            try {
+                int idx = Integer.parseInt(part.trim()) - 1;
+                if (idx >= 0 && idx < uncovered.size()) {
+                    item.markFileCovered(uncovered.get(idx));
+                    marked++;
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+        if (marked > 0) System.out.printf("%d file(s) marked as covered.%n", marked);
+    }
+
+    // ── Add / Delete note ──────────────────────────────────────────────────────
 
     private void addNote() {
         StudyItem item = selectItem();
         if (item == null) return;
 
         List<String> existing = item.getNotes();
-        if (!existing.isEmpty()) {
-            System.out.println("Existing notes:");
-            for (int i = 0; i < existing.size(); i++) {
-                System.out.printf("  %d. %s%n", i + 1, existing.get(i));
-            }
+        if (existing.isEmpty()) {
+            System.out.println("No notes yet.");
+        } else {
+            existing.forEach(n -> System.out.println("- (" + (existing.indexOf(n) + 1) + ") " + n));
         }
 
-        System.out.print("New note (Enter to cancel): ");
-        String note = scanner.nextLine().trim();
-        if (note.isEmpty()) { System.out.println("Cancelled."); return; }
-        item.addNote(note);
-        System.out.println("Note added.");
+        System.out.println("Select an option:");
+        System.out.println("  1. Add note");
+        System.out.println("  2. Delete note");
+        System.out.print("Choice (Enter to cancel): ");
+        String choice = scanner.nextLine().trim();
+
+        if (choice.equals("1")) {
+            System.out.print("New note: ");
+            String note = scanner.nextLine().trim();
+            if (note.isEmpty()) { System.out.println("Cancelled."); return; }
+            item.addNote(note);
+            System.out.println("Note added.");
+        } else if (choice.equals("2")) {
+            if (existing.isEmpty()) { System.out.println("No notes to delete."); return; }
+            System.out.print("Delete note number: ");
+            try {
+                int idx = parseInt(scanner.nextLine()) - 1;
+                if (item.removeNote(idx)) {
+                    System.out.println("Note deleted.");
+                } else {
+                    System.out.println("Invalid number.");
+                }
+            } catch (IllegalArgumentException e) {
+                System.out.println("Invalid input.");
+            }
+        } else {
+            System.out.println("Cancelled.");
+        }
     }
 
     // ── Edit schedule ──────────────────────────────────────────────────────────
 
     private void editSchedule() {
-        StudyItem item = selectItem();
+        StudyItem item = selectItem(true);
         if (item == null) return;
         configureSchedule(item);
         System.out.println("Schedule updated for: " + item.getTitle());
     }
 
-    // ── AI: roadmap (item-selection-first) ────────────────────────────────────
+    // ── AI: roadmap (item-selection-first, material-aware) ────────────────────
 
     private void studyRoadmap() {
         System.out.println("Select the study item for the AI roadmap:");
         StudyItem item = selectItem();
         if (item == null) return;
+
+        // resolve material file names: use saved folder or ask user right now
+        List<String> fileNames = new ArrayList<>();
+        long totalPages = 0;
+
+        String folder = item.getMaterialFolder();
+        if (!folder.isEmpty()) {
+            // item already has a folder — scan it silently
+            fileNames = listFileNames(folder);
+            totalPages = item.getEstimatedTotalPages();
+            if (!fileNames.isEmpty()) {
+                System.out.printf("Using %d material file(s) from saved folder for a detailed roadmap.%n",
+                        fileNames.size());
+            }
+        } else {
+            // no folder on record — offer to provide one just for this roadmap
+            System.out.println("No material folder linked to this item.");
+            System.out.print("Enter folder path for a detailed roadmap (Enter to skip): ");
+            String input = scanner.nextLine().trim();
+            if (!input.isEmpty()) {
+                fileNames = listFileNames(input);
+                if (fileNames.isEmpty()) {
+                    System.out.println("Folder not found or empty — generating a general roadmap.");
+                } else {
+                    // estimate pages from fresh scan
+                    totalPages = estimatePages(input);
+                    System.out.printf("Found %d file(s) — generating material-specific roadmap.%n",
+                            fileNames.size());
+                }
+            }
+        }
+
         String subject = item.getTitle();
         System.out.println("Building roadmap for \"" + subject + "\"...");
-        awaitAI(AppController.getStudyRoadmapAsync(subject));
+        if (!fileNames.isEmpty()) {
+            awaitAI(AppController.getStudyRoadmapWithMaterialsAsync(subject, fileNames, totalPages));
+        } else {
+            awaitAI(AppController.getStudyRoadmapAsync(subject));
+        }
     }
 
     // ── AI: optimize (item-selection-first) ───────────────────────────────────
@@ -275,14 +404,24 @@ public class CommandRouter implements AutoCloseable {
     private void viewCurrentPlan() {
         StudyItem item = selectItem();
         if (item == null) return;
+
+        // always show notes
+        List<String> notes = item.getNotes();
+        if (!notes.isEmpty()) {
+            System.out.println("  Notes:");
+            notes.forEach(n -> System.out.println("    - " + n));
+        }
+
+        // completed items: show done status only, no session details
+        if (item.isComplete()) {
+            System.out.printf("[DONE] '%s' — %.1f/%.1f hours completed.%n",
+                    item.getTitle(), item.getHoursCompleted(), item.getTotalHours());
+            return;
+        }
+
         AppController.getPlan(item.getId()).ifPresentOrElse(
                 plan -> {
                     System.out.println(plan);
-                    List<String> notes = item.getNotes();
-                    if (!notes.isEmpty()) {
-                        System.out.println("  Notes:");
-                        notes.forEach(n -> System.out.println("    - " + n));
-                    }
                     printMaterialSuggestion(item, plan);
                 },
                 () -> System.out.println("No plan yet — generate one with option 3."));
@@ -430,6 +569,36 @@ public class CommandRouter implements AutoCloseable {
         }
     }
 
+    /** Returns a list of file names (not full paths) from the given folder, sorted. */
+    private List<String> listFileNames(String folderPath) {
+        Path dir = Path.of(folderPath);
+        if (!Files.isDirectory(dir)) return new ArrayList<>();
+        try {
+            return Files.list(dir)
+                    .filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .sorted()
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    /** Estimates total pages for all files in a folder (50 KB ≈ 1 page). */
+    private long estimatePages(String folderPath) {
+        Path dir = Path.of(folderPath);
+        if (!Files.isDirectory(dir)) return 0;
+        try {
+            long totalBytes = Files.list(dir)
+                    .filter(Files::isRegularFile)
+                    .mapToLong(p -> { try { return Files.size(p); } catch (Exception e) { return 0; } })
+                    .sum();
+            return Math.max(1, totalBytes / (50 * 1024));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     // ── Material suggestion helper ─────────────────────────────────────────────
 
     /**
@@ -463,12 +632,25 @@ public class CommandRouter implements AutoCloseable {
 
     // ── Item selection helper ─────────────────────────────────────────────────
 
-    private StudyItem selectItem() {
-        List<StudyItem> items = AppController.getItemsSortedByDeadline();
-        if (items.isEmpty()) { System.out.println("No study items."); return null; }
+    /**
+     * Prompts the user to select a study item.
+     *
+     * @param incompleteOnly when true, completed items are hidden from the list
+     *                       (used for generate-plan, record-progress, edit-schedule)
+     */
+    private StudyItem selectItem(boolean incompleteOnly) {
+        List<StudyItem> all = AppController.getItemsSortedByDeadline();
+        List<StudyItem> items = incompleteOnly
+                ? all.stream().filter(i -> !i.isComplete()).collect(java.util.stream.Collectors.toList())
+                : all;
+        if (items.isEmpty()) {
+            System.out.println(incompleteOnly ? "No active (incomplete) study items." : "No study items.");
+            return null;
+        }
         System.out.println();
         for (int i = 0; i < items.size(); i++) {
-            System.out.printf("%d. %s%n", i + 1, items.get(i));
+            String tag = items.get(i).isComplete() ? " [DONE]" : "";
+            System.out.printf("%d. %s%s%n", i + 1, items.get(i), tag);
         }
         System.out.print("Select number: ");
         try {
@@ -482,6 +664,11 @@ public class CommandRouter implements AutoCloseable {
             System.out.println("Invalid input.");
             return null;
         }
+    }
+
+    /** Selects from all items (including completed). */
+    private StudyItem selectItem() {
+        return selectItem(false);
     }
 
     // ── Parsing helpers ────────────────────────────────────────────────────────

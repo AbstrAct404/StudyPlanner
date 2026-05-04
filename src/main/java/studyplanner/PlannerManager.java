@@ -90,4 +90,14 @@ public class PlannerManager {
     public Optional<StudyPlan> getPlan(String id) {
         return Optional.ofNullable(plans.get(id));
     }
+
+    /** Returns a snapshot of all currently stored plans (item id → plan). */
+    public Map<String, StudyPlan> getAllPlans() {
+        return new HashMap<>(plans);
+    }
+
+    /** Stores a pre-built plan directly — used when reloading persisted plans. */
+    public void putPlan(String itemId, StudyPlan plan) {
+        plans.put(itemId, plan);
+    }
 }

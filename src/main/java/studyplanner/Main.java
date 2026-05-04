@@ -30,7 +30,7 @@ public class Main {
         System.out.println("2.  View all items");
         System.out.println("3.  Generate plan");
         System.out.println("4.  Record progress");
-        System.out.println("5.  Add note to study item");
+        System.out.println("5.  Add / delete note");
         System.out.println("6.  Edit daily schedule");
         System.out.println("──────── AI Features ───────────");
         System.out.println("7.  AI: Study roadmap");

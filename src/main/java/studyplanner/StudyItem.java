@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,6 +42,9 @@ public class StudyItem {
     private String materialFolder      = "";
     private int    materialFileCount   = 0;
     private long   estimatedTotalPages = 0;
+
+    // files the user has marked as covered (persisted)
+    private final Set<String> coveredFiles = new LinkedHashSet<>();
 
     public StudyItem(String title, LocalDate deadline, double totalHours, int daysAvailablePerWeek) {
         this.id = UUID.randomUUID().toString().substring(0, 8);
@@ -118,6 +122,13 @@ public class StudyItem {
         }
     }
 
+    /** Removes the note at the given 0-based index. Returns false if index is out of range. */
+    public boolean removeNote(int index) {
+        if (index < 0 || index >= notes.size()) return false;
+        notes.remove(index);
+        return true;
+    }
+
     public List<String> getNotes() { return Collections.unmodifiableList(notes); }
 
     // ── material folder ────────────────────────────────────────────────────────
@@ -128,6 +139,16 @@ public class StudyItem {
     public void setMaterialFileCount(int n) { this.materialFileCount = n; }
     public long getEstimatedTotalPages() { return estimatedTotalPages; }
     public void setEstimatedTotalPages(long p) { this.estimatedTotalPages = p; }
+
+    // ── covered files ──────────────────────────────────────────────────────────
+
+    public void markFileCovered(String filename) {
+        if (filename != null && !filename.isBlank()) coveredFiles.add(filename.trim());
+    }
+
+    public boolean isFileCovered(String filename) { return coveredFiles.contains(filename); }
+
+    public Set<String> getCoveredFiles() { return Collections.unmodifiableSet(coveredFiles); }
 
     // ── display ────────────────────────────────────────────────────────────────
 

@@ -27,18 +27,33 @@ public final class AppController {
 
         // load saved data on startup; failures are non-fatal (Lec6 — NIO)
         try {
-            persistence.load().forEach(manager::addStudyItem);
+            PersistenceService.LoadResult result = persistence.load();
+            result.items.forEach(manager::addStudyItem);
+
+            // reconstruct persisted plans
+            for (StudyItem item : result.items) {
+                String id = item.getId();
+                List<StudySession> sessions = result.planSessions.get(id);
+                if (sessions != null && !sessions.isEmpty()) {
+                    String strategy  = result.planStrategies.getOrDefault(id, "Daily");
+                    boolean feasible = result.planFeasible.getOrDefault(id, true);
+                    StudyPlan plan   = new StudyPlan(item, sessions, strategy, feasible);
+                    manager.putPlan(id, plan);
+                }
+            }
+
             int n = manager.getAllItems().size();
-            if (n > 0) System.out.println("Loaded " + n + " saved item(s).");
+            long p = manager.getAllPlans().size();
+            if (n > 0) System.out.printf("Loaded %d item(s), %d plan(s).%n", n, p);
         } catch (StudyPlannerException e) {
             System.out.println("Note: could not load saved data (" + e.getMessage() + ")");
         }
     }
 
-    // write current items to disk; called after any mutation
+    // write current items and plans to disk; called after any mutation
     public static void save() {
         try {
-            persistence.save(manager.getAllItems());
+            persistence.save(manager.getAllItems(), manager.getAllPlans());
         } catch (StudyPlannerException e) {
             System.out.println("Warning: could not save data (" + e.getMessage() + ")");
         }
@@ -98,6 +113,11 @@ public final class AppController {
     // AI features — all async so the console stays responsive during API calls
     public static CompletableFuture<String> getStudyRoadmapAsync(String subject) {
         return ai.getStudyRoadmapAsync(subject);
+    }
+
+    public static CompletableFuture<String> getStudyRoadmapWithMaterialsAsync(
+            String subject, List<String> fileNames, long totalPages) {
+        return ai.getStudyRoadmapWithMaterialsAsync(subject, fileNames, totalPages);
     }
 
     public static CompletableFuture<String> getPlanOptimizationAsync(List<StudySession> sessions) {

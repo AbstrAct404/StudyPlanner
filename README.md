@@ -54,7 +54,7 @@ mvn test
 2.  View all items
 3.  Generate plan
 4.  Record progress
-5.  Add note to study item
+5.  Add / delete note
 6.  Edit daily schedule
 ──────── AI Features ───────────
 7.  AI: Study roadmap
@@ -78,25 +78,37 @@ Select an item and choose Daily or Weekly strategy. The plan is printed immediat
 Today's session is marked with `← TODAY`.
 
 **Option 4 — Record progress**
-Log hours for a session. After saving, the plan is automatically regenerated starting
-from tomorrow so the remaining hours are spread evenly across future days — you never
-have to manually adjust the schedule.
+Log hours for a session. If the item has a material folder linked, you are prompted
+to mark which files you covered (shown as numbered list of uncovered files — pick by
+number). After saving, the plan is automatically regenerated starting from tomorrow
+so the remaining hours are spread evenly across future days. When an item is finished,
+you are asked whether to delete it or keep it accessible via options 9/10.
 
-**Option 5 — Add note**
-Attach free-text notes or comments to any study item. Notes appear in View all items
-and View current plan.
+**Option 5 — Add / delete note**
+Attach or remove free-text notes on any study item. Existing notes are shown as
+`- note` bullets before the add/delete prompt. Notes appear in View all items (option 2)
+and View current plan (option 11) even if no plan has been generated yet.
 
 **Option 6 — Edit daily schedule**
 Change the schedule mode (even split, heavier days, or custom hours) for any existing
 item without re-creating it.
 
 **Options 7 & 8 — AI**
-Both prompt you to select a specific item first. Option 7 generates a basics-to-advanced
-study roadmap for that item's subject. Option 8 analyzes that item's plan and suggests
+Both prompt you to select a specific item first. Option 7 generates a study roadmap:
+if the item has a material folder linked, the AI automatically receives the actual
+file names and page count and produces a **material-specific roadmap** with recommended
+reading order and files-per-phase suggestions. If no folder is linked, you are asked
+to provide one on the spot (it is not saved — just used for this roadmap). If you
+skip, a general roadmap is generated. Option 8 analyzes that item's plan and suggests
 optimizations.
 
+**Options 3, 6** (generate plan, edit schedule) — only incomplete items are shown.
+Completed items are hidden; they still appear in options 9 and 10 tagged `[DONE]`.
+
 **Option 11 — View current plan**
-Shows the full plan, any notes, and a material coverage suggestion (if a folder was set).
+Notes are always shown first (even before a plan exists). Then the plan is displayed
+with each session line in the format `date  DOW  hours  [x]/[ ] file1, file2` —
+`[x]` means the file has been marked as covered, `[ ]` means not yet.
 
 **Option 12 — Export to CSV**
 Writes a `.csv` file with one ITEM row per study goal and one SESSION row per planned
@@ -147,12 +159,18 @@ scheduled hours — what's on screen is always what you still need to do.
 
 When adding or updating an item you can provide a folder path containing your study
 materials (slides, PDFs, etc.). The app scans the folder with `Files.list()`, counts
-the files, and estimates total pages (50 KB ≈ 1 page). When you view the plan it
-prints a per-session suggestion:
+the files, and estimates total pages (50 KB ≈ 1 page).
+
+In the plan view, files are distributed evenly across sessions and displayed inline:
 
 ```
-Material suggestion: ~3.0 file(s)/session, ~31 page(s)/session (15 files, ~157 total pages)
+  2026-05-05  Mon  3.6h  [x] chapter1.pdf, [x] chapter2.pdf, [ ] chapter3.pdf
+  2026-05-06  Tue  3.6h  [ ] chapter4.pdf, [ ] chapter5.pdf
 ```
+
+`[x]` = covered this or a previous session, `[ ]` = not yet. Coverage is tracked per
+file and persisted. After recording progress (option 4) you are prompted to mark which
+files you finished in that session.
 
 ---
 
@@ -162,9 +180,11 @@ Your data is automatically saved to `study_planner_data.json` in the project fol
 after every change (add, delete, update, record progress). It is loaded back on
 startup, so nothing is lost between sessions.
 
-The JSON is written manually using `Files.writeString` (no third-party library). Notes,
-heavier-days config, material folder info, and progress are all persisted. Generated
-plans are not saved — regenerating them from the stored item data is instant.
+The JSON is written manually using `Files.writeString` (no third-party library).
+Everything is persisted: notes, schedule mode, material folder info, progress,
+covered files, and the **full generated plan** (sessions, strategy, generated-on date,
+feasibility). Plans are fully reconstructed on startup — no need to regenerate after
+restarting.
 
 ---
 
@@ -225,7 +245,7 @@ them, not a random HashMap order.
 
 ## Testing
 
-48 unit tests across 6 test classes, all using JUnit 5:
+49 unit tests across 6 test classes, all using JUnit 5:
 
 | Class | Tests | What it covers |
 |---|---|---|
@@ -233,7 +253,7 @@ them, not a random HashMap order.
 | `DailyPlanningStrategyTest` | 6 | Session generation, completed item, hour totals, deadline boundary, days/week limit |
 | `WeeklyPlanningStrategyTest` | 5 | Multi-week plans, completed item, even distribution, one-day deadline |
 | `PlannerManagerTest` | 12 | Add/retrieve/remove, progress, plan generation, stream queries, null guard |
-| `PersistenceServiceTest` | 6 | Round-trip save/load, empty list, multi-item, special chars, progress field |
+| `PersistenceServiceTest` | 7 | Round-trip save/load, empty list, multi-item, special chars, progress field, plan session persistence |
 | `InputValidatorTest` | 13 | Every validator: titles, hours, deadlines, date formats, days/week, progress |
 
 No tests touch `AIStudyAssistant` or make network calls.

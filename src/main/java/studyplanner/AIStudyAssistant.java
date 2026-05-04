@@ -50,6 +50,42 @@ public class AIStudyAssistant {
         return async(() -> getStudyRoadmap(subject));
     }
 
+    /**
+     * Richer roadmap that incorporates actual material file names.
+     * Suggests reading order and how many files to cover per study phase.
+     */
+    public String getStudyRoadmapWithMaterials(
+            String subject, List<String> fileNames, long totalPages) {
+        if (!isAvailable()) return unavailableMsg();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("I am studying \"").append(subject).append("\".\n");
+        sb.append("I have ").append(fileNames.size()).append(" study material file(s)");
+        if (totalPages > 0) sb.append(" totalling approximately ").append(totalPages).append(" pages");
+        sb.append(".\n\nMy materials:\n");
+        int limit = Math.min(fileNames.size(), 25);
+        for (int i = 0; i < limit; i++) {
+            sb.append("  ").append(i + 1).append(". ").append(fileNames.get(i)).append("\n");
+        }
+        if (fileNames.size() > 25) {
+            sb.append("  ... and ").append(fileNames.size() - 25).append(" more file(s)\n");
+        }
+        sb.append("\nBased on these materials, create a structured 4-phase study roadmap:\n");
+        sb.append("Phase 1: Foundations, Phase 2: Core Concepts, Phase 3: Advanced Topics, ");
+        sb.append("Phase 4: Review and Practice.\n");
+        sb.append("For each phase:\n");
+        sb.append("- List 3-4 specific topics as bullet points\n");
+        sb.append("- Recommend which files from the list above to read (by number or name)\n");
+        sb.append("- Suggest roughly how many files or pages to cover\n");
+        sb.append("Be concise and specific. Base recommendations on the actual file names provided.");
+        return callApi(sb.toString(), 750);
+    }
+
+    public CompletableFuture<String> getStudyRoadmapWithMaterialsAsync(
+            String subject, List<String> fileNames, long totalPages) {
+        return async(() -> getStudyRoadmapWithMaterials(subject, fileNames, totalPages));
+    }
+
     // ── 2. Plan optimization ───────────────────────────────────────────────────
 
     // analyzes scheduled sessions and gives 3 actionable improvement tips

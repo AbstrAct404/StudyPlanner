@@ -41,7 +41,16 @@ class DailyPlanningStrategy implements PlanningStrategy {
         List<LocalDate> studyDays = computeStudyDays(startDate, item.getDeadline(), item.getDaysAvailablePerWeek());
         if (studyDays.isEmpty()) return new ArrayList<>();
 
-        double hoursPerDay = Math.round((remaining / studyDays.size()) * 10.0) / 10.0;
+        double hoursPerDay = remaining / studyDays.size();
+
+        // enforce minimum 1h per session: use fewer days with 1h each instead of many days with tiny amounts
+        if (hoursPerDay < 1.0) {
+            int neededDays = (int) Math.ceil(remaining);          // e.g. 10.5h → 11 sessions
+            studyDays = studyDays.subList(0, Math.min(neededDays, studyDays.size()));
+            hoursPerDay = remaining / studyDays.size();           // recompute over the shorter list
+        }
+
+        hoursPerDay = Math.round(hoursPerDay * 10.0) / 10.0;
         List<StudySession> sessions = new ArrayList<>();
         for (LocalDate day : studyDays) {
             sessions.add(new StudySession(day, item.getTitle(), hoursPerDay));
@@ -168,26 +177,36 @@ class DailyPlanningStrategy implements PlanningStrategy {
 // Distributes hours as one target session per calendar week.
 class WeeklyPlanningStrategy implements PlanningStrategy {
 
+    private static final double MIN_HOURS_PER_WEEK = 7.0;
+
     @Override
     public List<StudySession> generateSessions(StudyItem item, LocalDate startDate) {
         List<StudySession> sessions = new ArrayList<>();
         double remaining = item.getRemainingHours();
-        if (remaining <= 0) {
-            return sessions;
-        }
+        if (remaining <= 0) return sessions;
 
         long totalDays = ChronoUnit.DAYS.between(startDate, item.getDeadline()) + 1;
-        if (totalDays <= 0) {
-            return sessions;
-        }
+        if (totalDays <= 0) return sessions;
 
         long totalWeeks = Math.max(1, (totalDays + 6) / 7);
-        double hoursPerWeek = Math.round((remaining / totalWeeks) * 10.0) / 10.0;
+        double hoursPerWeek = remaining / totalWeeks;
 
+        // enforce minimum 7h/week — use fewer weeks instead of tiny sessions
+        if (hoursPerWeek < MIN_HOURS_PER_WEEK) {
+            totalWeeks = (long) Math.ceil(remaining / MIN_HOURS_PER_WEEK);
+            hoursPerWeek = remaining / totalWeeks;
+        }
+
+        hoursPerWeek = Math.round(hoursPerWeek * 10.0) / 10.0;
+
+        // generate one session per week; stop as soon as hours are covered (can end before deadline)
+        double scheduled = 0;
         LocalDate weekStart = startDate;
-        for (int i = 0; i < totalWeeks; i++) {
+        for (int i = 0; i < totalWeeks && scheduled < remaining - 0.001; i++) {
+            double thisWeek = Math.round(Math.min(hoursPerWeek, remaining - scheduled) * 10.0) / 10.0;
             LocalDate sessionDate = weekStart.isAfter(item.getDeadline()) ? item.getDeadline() : weekStart;
-            sessions.add(new StudySession(sessionDate, item.getTitle(), hoursPerWeek));
+            sessions.add(new StudySession(sessionDate, item.getTitle(), thisWeek));
+            scheduled += thisWeek;
             weekStart = weekStart.plusWeeks(1);
         }
         return sessions;
