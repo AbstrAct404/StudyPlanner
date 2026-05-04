@@ -57,8 +57,8 @@ mvn test
 5.  Add note to study item
 6.  Edit daily schedule
 ──────── AI Features ───────────
-7.  AI: Study roadmap (for selected item)
-8.  AI: Optimize plan (for selected item)
+7.  AI: Study roadmap
+8.  AI: Optimize plan
 ──────── Manage Items ──────────
 9.  Delete item
 10. Update item
@@ -69,8 +69,9 @@ mvn test
 
 **Option 1 — Add study item**
 Enter a title, deadline (YYYY-MM-DD), total hours, and days/week. You'll also be
-asked to choose a schedule mode (even split or heavier days — see below) and
-optionally provide a folder of study materials for per-session file/page suggestions.
+asked to choose a schedule mode (even split, heavier days, or custom hours per day —
+see below) and optionally provide a folder of study materials for per-session
+file/page suggestions.
 
 **Option 3 — Generate plan**
 Select an item and choose Daily or Weekly strategy. The plan is printed immediately.
@@ -86,8 +87,8 @@ Attach free-text notes or comments to any study item. Notes appear in View all i
 and View current plan.
 
 **Option 6 — Edit daily schedule**
-Change the schedule mode (even split or heavier days) for any existing item without
-re-creating it.
+Change the schedule mode (even split, heavier days, or custom hours) for any existing
+item without re-creating it.
 
 **Options 7 & 8 — AI**
 Both prompt you to select a specific item first. Option 7 generates a basics-to-advanced
@@ -113,14 +114,22 @@ When you add or edit an item you choose how hours are distributed:
 multiplier (default 1.5×) more hours than regular days. The planner guarantees those
 days appear in the schedule every week. You can change the mode any time with option 6.
 
+**Custom hours** — you specify exact hours for each day of the week individually
+(e.g. Mon=2h, Wed=3h, Fri=1.5h, Sat=4h). The plan schedules only those days and
+assigns exactly those hours each week until remaining hours are covered. `daysPerWeek`
+is auto-set to match. You can change the mode any time with option 6.
+
 ---
 
 ## How the scheduling works
 
 **Daily strategy** — spreads remaining hours across individual days from today to the
-deadline, respecting your days/week setting. Within each 7-day window it fills the
-first N days. When heavier days are configured those DOWs always appear and receive
-`multiplier × base` hours; remaining daysPerWeek slots are filled by other days.
+deadline, respecting your days/week setting. Three sub-modes:
+- *Even split*: within each 7-day window it fills the first N days with equal hours.
+- *Heavier days*: chosen DOWs always appear and receive `multiplier × base` hours;
+  remaining daysPerWeek slots are filled by other days.
+- *Custom hours*: schedules only the specified DOWs with exact hours each week until
+  remaining hours are covered.
 
 **Weekly strategy** — one block per calendar week with your total weekly target. Good
 for when you want flexibility in when exactly you study within a week.
